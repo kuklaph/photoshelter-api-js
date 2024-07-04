@@ -8,8 +8,9 @@ export function PhotoShelterV4API(apiKey) {
   let authToken = null;
 
   const handleErrors = (json) => {
-    const msg = json.errors.reduce((n, t, i) => {
-      t += n.title + i == json.errors.length - 1 ? "" : " | ";
+    const msg = json.errors.reduce((t, n, i) => {
+      t += n.title + (i == json.errors.length - 1 ? "" : " | ");
+      return t;
     }, "");
 
     throw new Error(`Request Failed. Request Response: ${msg}`);
