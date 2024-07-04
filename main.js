@@ -7,6 +7,14 @@ export function PhotoShelterV4API(apiKey) {
   const baseUrl = "https://www.photoshelter.com/psapi/v4.0";
   let authToken = null;
 
+  const handleErrors = (json) => {
+    const msg = json.errors.reduce((n, t, i) => {
+      t += n.title + i == json.errors.length - 1 ? "" : " | ";
+    }, "");
+
+    throw new Error(`Request Failed. Request Response: ${msg}`);
+  };
+
   /**
    * Make an authenticated request to the PhotoShelter API
    * @param {string} endpoint - The API endpoint
@@ -34,15 +42,11 @@ export function PhotoShelterV4API(apiKey) {
       const response = await fetch(url, options);
       const json = await response.json();
       if (!response.ok) {
-        throw new Error(
-          json.errors.reduce((n, t, i) => {
-            t += n.title + i == json.errors.length - 1 ? "" : " | ";
-          }, "")
-        );
+        handleErrors(json);
       }
       return json;
     } catch (error) {
-      throw new Error(`Request Failed. Request Response: ${error.message}`);
+      throw error;
     }
   };
 
@@ -76,14 +80,13 @@ export function PhotoShelterV4API(apiKey) {
           body,
         });
 
+        const json = await response.json();
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          handleErrors(json);
         }
-
-        const data = await response.json();
-        authToken = data.token;
+        authToken = json.token;
       } catch (error) {
-        console.log(error);
+        throw error;
       }
     },
   };
