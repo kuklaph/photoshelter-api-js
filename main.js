@@ -5,15 +5,26 @@
  */
 export function PhotoShelterV4API(apiKey) {
   const baseUrl = "https://www.photoshelter.com/psapi/v4.0";
-  let authToken = null;
+  let authToken = null,
+    org = null,
+    isTwoFactor = null;
 
-  const handleErrors = (json) => {
-    const msg = json.errors.reduce((t, n, i) => {
-      t += n.title + (i == json.errors.length - 1 ? "" : " | ");
-      return t;
-    }, "");
+  const handleErrors = async (response, location) => {
+    const json = await response.json();
+    const msg = json.errors
+      .map((e) => e.title)
+      .filter(Boolean)
+      .join(" | ");
+    throw new Error(`Request Failed. Request Response: ${location} = ${msg}`);
+  };
 
-    throw new Error(`Request Failed. Request Response: ${msg}`);
+  const responseType = async (response) => {
+    const clone = response.clone();
+    try {
+      return await response.json();
+    } catch (error) {
+      return await clone.arrayBuffer();
+    }
   };
 
   /**
@@ -41,11 +52,11 @@ export function PhotoShelterV4API(apiKey) {
 
     try {
       const response = await fetch(url, options);
-      const json = await response.json();
       if (!response.ok) {
-        handleErrors(json);
+        handleErrors(response, endpoint);
       }
-      return json;
+
+      return await responseType(response);
     } catch (error) {
       throw error;
     }
@@ -53,9 +64,12 @@ export function PhotoShelterV4API(apiKey) {
 
   const toForm = (obj) => {
     return Object.keys(obj)
-      .map(
-        (key) => `${encodeURIComponent(key)}=${encodeURIComponent(obj[key])}`
+      .map((key) =>
+        obj[key]
+          ? `${encodeURIComponent(key)}=${encodeURIComponent(obj[key])}`
+          : ""
       )
+      .filter(Boolean)
       .join("&");
   };
 
@@ -81,11 +95,13 @@ export function PhotoShelterV4API(apiKey) {
           body,
         });
 
-        const json = await response.json();
         if (!response.ok) {
-          handleErrors(json);
+          handleErrors(response, "login");
         }
+        const json = await responseType(response);
         authToken = json.token;
+        org = json.org;
+        isTwoFactor = json.two_factor;
       } catch (error) {
         throw error;
       }
@@ -122,21 +138,122 @@ export function PhotoShelterV4API(apiKey) {
      * @returns {Promise<Object>} - The search results
      */
     search: async (params) => await request("/collections/search", params),
+
+    /**
+     * Create a new collection
+     * @param {Object} params - Collection parameters
+     * @param {string} params.name - Collection name
+     * @param {string} [params.description] - Collection description
+     * @returns {Promise<Object>} - The created collection information
+     */
+    create: async (params) =>
+      await request("/collections", params, { method: "POST" }),
+
+    /**
+     * Update an existing collection
+     * @param {string} id - The ID of the collection
+     * @param {Object} params - Collection parameters
+     * @param {string} [params.name] - Collection name
+     * @param {string} [params.description] - Collection description
+     * @returns {Promise<Object>} - The updated collection information
+     */
+    update: async (id, params) =>
+      await request(`/collections/${id}`, params, { method: "PATCH" }),
+
+    /**
+     * Delete a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The delete response
+     */
+    delete: async (id) =>
+      await request(`/collections/${id}`, {}, { method: "DELETE" }),
+
+    /**
+     * Get the children of a collection
+     * @param {string} id - The ID of the collection
+     * @param {Object} params - Query parameters
+     * @param {number} [params.page] - Page number
+     * @param {number} [params.per_page] - Number of items per page
+     * @returns {Promise<Object>} - The children information
+     */
+    getChildren: async (id, params = {}) =>
+      await request(`/collections/${id}/children`, params),
+
+    /**
+     * Get the child count of a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The child count information
+     */
+    getChildCount: async (id) => await request(`/collections/${id}/count`),
+
+    /**
+     * Get the key image of a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The key image information
+     */
+    getKeyImage: async (id) => await request(`/collections/${id}/key_image`),
+
+    /**
+     * Get the link to a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The link information
+     */
+    getLink: async (id) => await request(`/collections/${id}/link`),
+
+    /**
+     * Get the access (visibility) of a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The access information
+     */
+    getAccess: async (id) => await request(`/collections/${id}/access`),
+
+    /**
+     * Get a specific child of a collection
+     * @param {string} id - The ID of the collection
+     * @param {string} childId - The ID of the child
+     * @returns {Promise<Object>} - The child information
+     */
+    getChildById: async (id, childId) =>
+      await request(`/collections/${id}/children/${childId}`),
+
+    /**
+     * Get the access rights (permissions) of a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The permissions information
+     */
+    getPermissions: async (id) =>
+      await request(`/collections/${id}/permissions`),
+
+    /**
+     * Get the parent of a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The parent information
+     */
+    getParent: async (id) => await request(`/collections/${id}/parent`),
+
+    /**
+     * Get the breadcrumb path of a collection
+     * @param {string} id - The ID of the collection
+     * @returns {Promise<Object>} - The breadcrumb path information
+     */
+    getPath: async (id) => await request(`/collections/${id}/path`),
   };
 
   /**
-   * Contacts Endpoints
+   * Contact Endpoints
    * @namespace contacts
    */
   const contacts = {
     /**
-     * Get all contacts
-     * @param {Object} params - Query parameters
+     * Search for contacts and contact groups
+     * @param {Object} params - Search parameters
+     * @param {string} [params.query] - Search query
+     * @param {string} [params.email] - Filter by email
      * @param {number} [params.page] - Page number
      * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The contacts information
+     * @returns {Promise<Object>} - The search results
      */
-    getAll: async (params = {}) => await request("/contacts", params),
+    search: async (params = {}) => await request("/contacts", params),
 
     /**
      * Get a specific contact by ID
@@ -144,127 +261,105 @@ export function PhotoShelterV4API(apiKey) {
      * @returns {Promise<Object>} - The contact information
      */
     getById: async (id) => await request(`/contacts/${id}`),
-
-    /**
-     * Create a new contact
-     * @param {Object} params - Contact parameters
-     * @param {string} params.name - Contact name
-     * @param {string} params.email - Contact email
-     * @param {string} [params.phone] - Contact phone
-     * @returns {Promise<Object>} - The created contact information
-     */
-    create: async (params) =>
-      await request("/contacts", params, { method: "POST" }),
-
-    /**
-     * Update an existing contact
-     * @param {string} id - The ID of the contact
-     * @param {Object} params - Contact parameters
-     * @param {string} [params.name] - Contact name
-     * @param {string} [params.email] - Contact email
-     * @param {string} [params.phone] - Contact phone
-     * @returns {Promise<Object>} - The updated contact information
-     */
-    update: async (id, params) =>
-      await request(`/contacts/${id}`, params, { method: "PUT" }),
-
-    /**
-     * Delete a contact
-     * @param {string} id - The ID of the contact
-     * @returns {Promise<Object>} - The delete response
-     */
-    delete: async (id) =>
-      await request(`/contacts/${id}`, {}, { method: "DELETE" }),
   };
 
   /**
-   * EmbedTokens Endpoints
+   * Embed Token Endpoints
    * @namespace embedTokens
    */
   const embedTokens = {
     /**
-     * Get all embed tokens
+     * List all embed tokens
      * @param {Object} params - Query parameters
      * @param {number} [params.page] - Page number
      * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The embed tokens information
+     * @returns {Promise<Object>} - The list of embed tokens
      */
-    getAll: async (params = {}) => await request("/embedtokens", params),
+    getAll: async (params = {}) => await request("/embed-tokens", params),
+
+    /**
+     * Create an embed token
+     * @param {Object} data - Embed token data
+     * @param {string} data.name - The name of the token
+     * @param {string} [data.description] - The description of the token
+     * @returns {Promise<Object>} - The created embed token information
+     */
+    create: async (data) =>
+      await request("/embed-tokens", data, { method: "POST" }),
 
     /**
      * Get a specific embed token by ID
      * @param {string} id - The ID of the embed token
      * @returns {Promise<Object>} - The embed token information
      */
-    getById: async (id) => await request(`/embedtokens/${id}`),
+    getById: async (id) => await request(`/embed-tokens/${id}`),
 
     /**
-     * Create a new embed token
-     * @param {Object} params - Embed token parameters
-     * @param {string} params.name - Embed token name
-     * @param {string} params.description - Embed token description
-     * @returns {Promise<Object>} - The created embed token information
+     * Update an embed token by ID
+     * @param {string} id - The ID of the embed token
+     * @param {Object} data - Embed token data
+     * @param {string} [data.name] - The name of the token
+     * @param {string} [data.description] - The description of the token
+     * @returns {Promise<Object>} - The updated embed token information
      */
-    create: async (params) =>
-      await request("/embedtokens", params, { method: "POST" }),
+    updateById: async (id, data) =>
+      await request(`/embed-tokens/${id}`, data, { method: "PATCH" }),
 
     /**
-     * Delete an embed token
+     * Delete an embed token by ID
      * @param {string} id - The ID of the embed token
      * @returns {Promise<Object>} - The delete response
      */
-    delete: async (id) =>
-      await request(`/embedtokens/${id}`, {}, { method: "DELETE" }),
+    deleteById: async (id) =>
+      await request(`/embed-tokens/${id}`, {}, { method: "DELETE" }),
   };
 
   /**
-   * Faces Endpoints
+   * Face Endpoints
    * @namespace faces
    */
   const faces = {
     /**
-     * Get all faces
-     * @param {Object} params - Query parameters
-     * @param {number} [params.page] - Page number
-     * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The faces information
+     * Add a new face image to a person
+     * @param {Object} data - Face data
+     * @param {File} data.file - Image file of the face
+     * @param {string} data.person_id - The ID of the person
+     * @returns {Promise<Object>} - The created face information
      */
-    getAll: async (params = {}) => await request("/faces", params),
+    add: async (data) =>
+      await request("/faces", data, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      }),
 
     /**
      * Get a specific face by ID
      * @param {string} id - The ID of the face
+     * @param {Object} params - Query parameters
+     * @param {string} [params.include] - Include related resources of the primary resource
      * @returns {Promise<Object>} - The face information
      */
-    getById: async (id) => await request(`/faces/${id}`),
+    getById: async (id, params = {}) => await request(`/faces/${id}`, params),
 
     /**
-     * Create a new face
-     * @param {Object} params - Face parameters
-     * @param {string} params.name - Face name
-     * @param {string} [params.description] - Face description
-     * @returns {Promise<Object>} - The created face information
-     */
-    create: async (params) =>
-      await request("/faces", params, { method: "POST" }),
-
-    /**
-     * Update an existing face
+     * Update a face by ID
      * @param {string} id - The ID of the face
-     * @param {Object} params - Face parameters
-     * @param {string} [params.name] - Face name
-     * @param {string} [params.description] - Face description
+     * @param {Object} data - Face data
+     * @param {string} data.person_id - The ID of the person
      * @returns {Promise<Object>} - The updated face information
      */
-    update: async (id, params) =>
-      await request(`/faces/${id}`, params, { method: "PUT" }),
+    updateById: async (id, data) =>
+      await request(`/faces/${id}`, data, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      }),
 
     /**
-     * Delete a face
+     * Delete a face by ID
      * @param {string} id - The ID of the face
      * @returns {Promise<Object>} - The delete response
      */
-    delete: async (id) =>
+    deleteById: async (id) =>
       await request(`/faces/${id}`, {}, { method: "DELETE" }),
   };
 
@@ -290,14 +385,175 @@ export function PhotoShelterV4API(apiKey) {
     getById: async (id) => await request(`/galleries/${id}`),
 
     /**
-     * Search galleries
-     * @param {Object} params - Search parameters
-     * @param {string} params.query - Search query
-     * @param {number} [params.page] - Page number
-     * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The search results
+     * Create a gallery
+     * @param {Object} data - The gallery data
+     * @param {string} data.name - The name of the gallery
+     * @param {string} [data.description] - The description of the gallery
+     * @param {boolean} [data.is_public] - Whether the gallery is public
+     * @returns {Promise<Object>} - The created gallery information
      */
-    search: async (params) => await request("/galleries/search", params),
+    create: async (data) =>
+      await request("/galleries", data, { method: "POST" }),
+
+    /**
+     * Batch update galleries
+     * @param {Object} data - The gallery data
+     * @param {string[]} data.gallery_ids - Array of gallery IDs to be updated
+     * @param {Object} [data.updates] - Updates to apply to the galleries
+     * @returns {Promise<Object>} - The updated galleries information
+     */
+    batchUpdate: async (data) =>
+      await request("/galleries/batch", data, { method: "PATCH" }),
+
+    /**
+     * Update a gallery by ID
+     * @param {string} id - The ID of the gallery
+     * @param {Object} data - The updated gallery data
+     * @returns {Promise<Object>} - The updated gallery information
+     */
+    updateById: async (id, data) =>
+      await request(`/galleries/${id}`, data, { method: "PATCH" }),
+
+    /**
+     * Delete a gallery by ID
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The delete response
+     */
+    deleteById: async (id) =>
+      await request(`/galleries/${id}`, {}, { method: "DELETE" }),
+
+    /**
+     * Get the access (visibility) of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The access information
+     */
+    getAccessById: async (id) => await request(`/galleries/${id}/access`),
+
+    /**
+     * Get the child count of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The child count information
+     */
+    getChildCountById: async (id) => await request(`/galleries/${id}/count`),
+
+    /**
+     * Get the children of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The children information
+     */
+    getChildrenById: async (id) => await request(`/galleries/${id}/children`),
+
+    /**
+     * Add a child to a gallery
+     * @param {string} id - The ID of the gallery
+     * @param {Object} data - The child data
+     * @returns {Promise<Object>} - The updated gallery information
+     */
+    addChildById: async (id, data) =>
+      await request(`/galleries/${id}/children`, data, { method: "POST" }),
+
+    /**
+     * Remove a child from a gallery
+     * @param {string} id - The ID of the gallery
+     * @param {string} childId - The ID of the child to be removed
+     * @returns {Promise<Object>} - The updated gallery information
+     */
+    removeChildById: async (id, childId) =>
+      await request(
+        `/galleries/${id}/children/${childId}`,
+        {},
+        { method: "DELETE" }
+      ),
+
+    /**
+     * Get a specific child from a gallery
+     * @param {string} id - The ID of the gallery
+     * @param {string} childId - The ID of the child
+     * @returns {Promise<Object>} - The child information
+     */
+    getChildById: async (id, childId) =>
+      await request(`/galleries/${id}/children/${childId}`),
+
+    /**
+     * Update the media in a gallery
+     * @param {string} id - The ID of the gallery
+     * @param {Object} data - The media data
+     * @returns {Promise<Object>} - The updated gallery information
+     */
+    updateMedia: async (id, data) =>
+      await request(`/galleries/${id}/media`, data, { method: "PATCH" }),
+
+    /**
+     * Get the cover of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The cover information
+     */
+    getCoverById: async (id) => await request(`/galleries/${id}/cover`),
+
+    /**
+     * Get the key image of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The key image information
+     */
+    getKeyImageById: async (id) => await request(`/galleries/${id}/key_image`),
+
+    /**
+     * Update the key image of a gallery
+     * @param {string} id - The ID of the gallery
+     * @param {Object} data - The key image data
+     * @returns {Promise<Object>} - The updated key image information
+     */
+    updateKeyImageById: async (id, data) =>
+      await request(`/galleries/${id}/key_image`, data, { method: "PATCH" }),
+
+    /**
+     * Get the link of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The link information
+     */
+    getLinkById: async (id) => await request(`/galleries/${id}/link`),
+
+    /**
+     * Get the parents of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The parents information
+     */
+    getParentsById: async (id) => await request(`/galleries/${id}/parents`),
+
+    /**
+     * Add a parent to a gallery
+     * @param {string} id - The ID of the gallery
+     * @param {Object} data - The parent data
+     * @returns {Promise<Object>} - The updated gallery information
+     */
+    addParentById: async (id, data) =>
+      await request(`/galleries/${id}/parents`, data, { method: "POST" }),
+
+    /**
+     * Remove a parent from a gallery
+     * @param {string} id - The ID of the gallery
+     * @param {string} parentId - The ID of the parent to be removed
+     * @returns {Promise<Object>} - The updated gallery information
+     */
+    removeParentById: async (id, parentId) =>
+      await request(
+        `/galleries/${id}/parents/${parentId}`,
+        {},
+        { method: "DELETE" }
+      ),
+
+    /**
+     * Get the breadcrumb path of a gallery
+     * @param {string} id - The ID of the gallery
+     * @returns {Promise<Object>} - The breadcrumb path information
+     */
+    getPathById: async (id) => await request(`/galleries/${id}/path`),
+  };
+
+  const info = {
+    authToken,
+    org,
+    isTwoFactor,
   };
 
   /**
@@ -306,49 +562,10 @@ export function PhotoShelterV4API(apiKey) {
    */
   const integrations = {
     /**
-     * Get all integrations
-     * @param {Object} params - Query parameters
-     * @param {number} [params.page] - Page number
-     * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The integrations information
+     * List integration information
+     * @returns {Promise<Object>} - List of integration information
      */
-    getAll: async (params = {}) => await request("/integrations", params),
-
-    /**
-     * Get a specific integration by ID
-     * @param {string} id - The ID of the integration
-     * @returns {Promise<Object>} - The integration information
-     */
-    getById: async (id) => await request(`/integrations/${id}`),
-
-    /**
-     * Create a new integration
-     * @param {Object} params - Integration parameters
-     * @param {string} params.name - Integration name
-     * @param {string} params.description - Integration description
-     * @returns {Promise<Object>} - The created integration information
-     */
-    create: async (params) =>
-      await request("/integrations", params, { method: "POST" }),
-
-    /**
-     * Update an existing integration
-     * @param {string} id - The ID of the integration
-     * @param {Object} params - Integration parameters
-     * @param {string} [params.name] - Integration name
-     * @param {string} [params.description] - Integration description
-     * @returns {Promise<Object>} - The updated integration information
-     */
-    update: async (id, params) =>
-      await request(`/integrations/${id}`, params, { method: "PUT" }),
-
-    /**
-     * Delete an integration
-     * @param {string} id - The ID of the integration
-     * @returns {Promise<Object>} - The delete response
-     */
-    delete: async (id) =>
-      await request(`/integrations/${id}`, {}, { method: "DELETE" }),
+    list: async () => await request("/integrations"),
   };
 
   /**
@@ -357,30 +574,14 @@ export function PhotoShelterV4API(apiKey) {
    */
   const library = {
     /**
-     * Get all library items
+     * Retrieve library listing
      * @param {Object} params - Query parameters
+     * @param {boolean} [params.is_listed] - Filter by listed or unlisted
      * @param {number} [params.page] - Page number
      * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The library items information
+     * @returns {Promise<Object>} - The library listing
      */
     getAll: async (params = {}) => await request("/library", params),
-
-    /**
-     * Get a specific library item by ID
-     * @param {string} id - The ID of the library item
-     * @returns {Promise<Object>} - The library item information
-     */
-    getById: async (id) => await request(`/library/${id}`),
-
-    /**
-     * Search library items
-     * @param {Object} params - Search parameters
-     * @param {string} params.query - Search query
-     * @param {number} [params.page] - Page number
-     * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The search results
-     */
-    search: async (params) => await request("/library/search", params),
   };
 
   /**
@@ -389,49 +590,209 @@ export function PhotoShelterV4API(apiKey) {
    */
   const media = {
     /**
-     * Get all media items
+     * Retrieve a list of media
      * @param {Object} params - Query parameters
+     * @param {string} [params.query] - Search query
      * @param {number} [params.page] - Page number
      * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The media items information
+     * @returns {Promise<Object>} - The media information
      */
     getAll: async (params = {}) => await request("/media", params),
 
     /**
-     * Get a specific media item by ID
-     * @param {string} id - The ID of the media item
-     * @returns {Promise<Object>} - The media item information
+     * Create a new media
+     * @param {Object} data - Media data
+     * @returns {Promise<Object>} - The created media information
+     */
+    create: async (data) => await request("/media", data, { method: "POST" }),
+
+    /**
+     * Batch update media
+     * @param {Object} data - Media data
+     * @returns {Promise<Object>} - The updated media information
+     */
+    batchUpdate: async (data) =>
+      await request("/media/batch", data, { method: "PATCH" }),
+
+    /**
+     * Batch download media
+     * @param {Object} params - Download parameters
+     * @returns {Promise<Object>} - The download response
+     */
+    batchDownload: async (params) =>
+      await request("/media/batch/download", params),
+
+    /**
+     * Batch get a set of media download options
+     * @param {Object} params - Download options parameters
+     * @returns {Promise<Object>} - The download options response
+     */
+    getBatchDownloadOptions: async (params) =>
+      await request("/media/batch/download/options", params),
+
+    /**
+     * Batch update media metadata (Video only)
+     * @param {Object} data - Metadata data
+     * @returns {Promise<Object>} - The updated metadata information
+     */
+    batchUpdateMetadata: async (data) =>
+      await request("/media/batch/metadata", data, { method: "PATCH" }),
+
+    /**
+     * Get a specific media by ID
+     * @param {string} id - The ID of the media
+     * @returns {Promise<Object>} - The media information
      */
     getById: async (id) => await request(`/media/${id}`),
 
     /**
-     * Create a new media item
-     * @param {Object} params - Media item parameters
-     * @param {string} params.name - Media item name
-     * @param {string} params.description - Media item description
-     * @returns {Promise<Object>} - The created media item information
+     * Update a media by ID
+     * @param {string} id - The ID of the media
+     * @param {Object} data - Media data
+     * @returns {Promise<Object>} - The updated media information
      */
-    create: async (params) =>
-      await request("/media", params, { method: "POST" }),
+    updateById: async (id, data) =>
+      await request(`/media/${id}`, data, { method: "PATCH" }),
 
     /**
-     * Update an existing media item
-     * @param {string} id - The ID of the media item
-     * @param {Object} params - Media item parameters
-     * @param {string} [params.name] - Media item name
-     * @param {string} [params.description] - Media item description
-     * @returns {Promise<Object>} - The updated media item information
-     */
-    update: async (id, params) =>
-      await request(`/media/${id}`, params, { method: "PUT" }),
-
-    /**
-     * Delete a media item
-     * @param {string} id - The ID of the media item
+     * Delete a media by ID
+     * @param {string} id - The ID of the media
      * @returns {Promise<Object>} - The delete response
      */
-    delete: async (id) =>
+    deleteById: async (id) =>
       await request(`/media/${id}`, {}, { method: "DELETE" }),
+
+    /**
+     * Get custom metadata of a media (Image only)
+     * @param {string} id - The ID of the image
+     * @returns {Promise<Object>} - The custom metadata information
+     */
+    getCustomMetadataById: async (id) =>
+      await request(`/media/${id}/custom_metadata`),
+
+    /**
+     * Download media
+     * @param {string} id - The ID of the media
+     * @param {Object} params - Download parameters
+     * @returns {Promise<Object>} - The download response
+     */
+    downloadById: async (id, params = {}) =>
+      await request(`/media/${id}/download`, params),
+
+    /**
+     * Download and transform media
+     * @param {string} id - The ID of the media
+     * @param {Object} params - Transform parameters
+     * @returns {Promise<Object>} - The download response
+     */
+    downloadTransformById: async (id, params = {}) =>
+      await request(`/media/${id}/download/transform`, params),
+
+    /**
+     * Get galleries for a media
+     * @param {string} id - The ID of the media
+     * @returns {Promise<Object>} - The galleries information
+     */
+    getGalleriesById: async (id) => await request(`/media/${id}/galleries`),
+
+    /**
+     * Get EXIF data of a media
+     * @param {string} id - The ID of the image
+     * @returns {Promise<Object>} - The EXIF data
+     */
+    getExifById: async (id) => await request(`/media/${id}/exif`),
+
+    /**
+     * Get IPTC data of a media
+     * @param {string} id - The ID of the image
+     * @returns {Promise<Object>} - The IPTC data
+     */
+    getIptcById: async (id) => await request(`/media/${id}/iptc`),
+
+    /**
+     * Update IPTC data of a media
+     * @param {string} id - The ID of the image
+     * @param {Object} data - IPTC data
+     * @returns {Promise<Object>} - The updated IPTC data
+     */
+    updateIptcById: async (id, data) =>
+      await request(`/media/${id}/iptc`, data, { method: "PATCH" }),
+
+    /**
+     * Get link of a media
+     * @param {string} id - The ID of the media
+     * @returns {Promise<Object>} - The link information
+     */
+    getLinkById: async (id) => await request(`/media/${id}/link`),
+
+    /**
+     * Get metadata of a media
+     * @param {string} id - The ID of the media
+     * @returns {Promise<Object>} - The metadata information
+     */
+    getMetadataById: async (id) => await request(`/media/${id}/metadata`),
+
+    /**
+     * Update metadata of a media
+     * @param {string} id - The ID of the media
+     * @param {Object} data - Metadata data
+     * @returns {Promise<Object>} - The updated metadata information
+     */
+    updateMetadataById: async (id, data) =>
+      await request(`/media/${id}/metadata`, data, { method: "PATCH" }),
+
+    /**
+     * Get machine learning metadata of a media
+     * @param {string} id - The ID of the media
+     * @returns {Promise<Object>} - The machine learning metadata information
+     */
+    getMlMetadataById: async (id) => await request(`/media/${id}/ml_metadata`),
+
+    /**
+     * Update machine learning metadata of a media
+     * @param {string} id - The ID of the media
+     * @param {Object} data - Machine learning metadata data
+     * @returns {Promise<Object>} - The updated machine learning metadata information
+     */
+    updateMlMetadataById: async (id, data) =>
+      await request(`/media/${id}/ml_metadata`, data, { method: "PATCH" }),
+
+    /**
+     * Get XMP data of a media
+     * @param {string} id - The ID of the image
+     * @returns {Promise<Object>} - The XMP data
+     */
+    getXmpById: async (id) => await request(`/media/${id}/xmp`),
+
+    /**
+     * Update XMP data of a media
+     * @param {string} id - The ID of the image
+     * @param {Object} data - XMP data
+     * @returns {Promise<Object>} - The updated XMP data
+     */
+    updateXmpById: async (id, data) =>
+      await request(`/media/${id}/xmp`, data, { method: "PATCH" }),
+
+    /**
+     * Upload a subtitle/caption
+     * @param {string} id - The ID of the video
+     * @param {Object} data - Subtitle data
+     * @returns {Promise<Object>} - The upload response
+     */
+    uploadSubtitleById: async (id, data) =>
+      await request(`/media/${id}/subtitle`, data, { method: "POST" }),
+
+    /**
+     * Update a subtitle/caption
+     * @param {string} id - The ID of the video
+     * @param {string} subtitleId - The ID of the subtitle
+     * @param {Object} data - Subtitle data
+     * @returns {Promise<Object>} - The updated subtitle information
+     */
+    updateSubtitleById: async (id, subtitleId, data) =>
+      await request(`/media/${id}/subtitle/${subtitleId}`, data, {
+        method: "PATCH",
+      }),
   };
 
   /**
@@ -440,49 +801,77 @@ export function PhotoShelterV4API(apiKey) {
    */
   const mediaVersions = {
     /**
-     * Get all media versions
-     * @param {Object} params - Query parameters
-     * @param {number} [params.page] - Page number
-     * @param {number} [params.per_page] - Number of items per page
-     * @returns {Promise<Object>} - The media versions information
+     * Get all versions for a given media ID
+     * @param {string} mediaId - The ID of the media
+     * @param {Object} [params] - Query parameters
+     * @param {string} [params.include] - Include additional information
+     * @returns {Promise<Object>} - The list of media versions
      */
-    getAll: async (params = {}) => await request("/media-versions", params),
+    getAll: async (mediaId, params = {}) =>
+      await request(`/media/${mediaId}/versions`, params),
 
     /**
-     * Get a specific media version by ID
-     * @param {string} id - The ID of the media version
-     * @returns {Promise<Object>} - The media version information
-     */
-    getById: async (id) => await request(`/media-versions/${id}`),
-
-    /**
-     * Create a new media version
-     * @param {Object} params - Media version parameters
-     * @param {string} params.name - Media version name
-     * @param {string} params.description - Media version description
+     * Create a new version for a given media ID
+     * @param {string} mediaId - The ID of the media
+     * @param {Object} data - Media version parameters
+     * @param {string} data.version_label - Label for the new version
+     * @param {string} [data.note] - Note for the new version
      * @returns {Promise<Object>} - The created media version information
      */
-    create: async (params) =>
-      await request("/media-versions", params, { method: "POST" }),
+    create: async (mediaId, data) =>
+      await request(`/media/${mediaId}/versions`, data, { method: "POST" }),
 
     /**
-     * Update an existing media version
-     * @param {string} id - The ID of the media version
-     * @param {Object} params - Media version parameters
-     * @param {string} [params.name] - Media version name
-     * @param {string} [params.description] - Media version description
+     * Update a specific media version by ID
+     * @param {string} mediaId - The ID of the media
+     * @param {string} versionId - The ID of the media version
+     * @param {Object} data - Media version parameters
+     * @param {string} [data.version_label] - Label for the version
+     * @param {string} [data.note] - Note for the version
      * @returns {Promise<Object>} - The updated media version information
      */
-    update: async (id, params) =>
-      await request(`/media-versions/${id}`, params, { method: "PUT" }),
+    update: async (mediaId, versionId, data) =>
+      await request(`/media/${mediaId}/versions/${versionId}`, data, {
+        method: "PUT",
+      }),
 
     /**
-     * Delete a media version
-     * @param {string} id - The ID of the media version
+     * Delete a specific media version by ID
+     * @param {string} mediaId - The ID of the media
+     * @param {string} versionId - The ID of the media version
      * @returns {Promise<Object>} - The delete response
      */
-    delete: async (id) =>
-      await request(`/media-versions/${id}`, {}, { method: "DELETE" }),
+    delete: async (mediaId, versionId) =>
+      await request(
+        `/media/${mediaId}/versions/${versionId}`,
+        {},
+        { method: "DELETE" }
+      ),
+
+    /**
+     * Update media version details by ID
+     * @param {string} mediaId - The ID of the media
+     * @param {string} versionId - The ID of the media version
+     * @param {Object} data - Media version parameters
+     * @returns {Promise<Object>} - The updated media version information
+     */
+    updateDetails: async (mediaId, versionId, data) =>
+      await request(`/media/${mediaId}/versions/${versionId}/details`, data, {
+        method: "PUT",
+      }),
+
+    /**
+     * Activate a media version by ID
+     * @param {string} mediaId - The ID of the media
+     * @param {string} versionId - The ID of the media version
+     * @returns {Promise<Object>} - The activation response
+     */
+    activate: async (mediaId, versionId) =>
+      await request(
+        `/media/${mediaId}/versions/${versionId}/activate`,
+        {},
+        { method: "POST" }
+      ),
   };
 
   /**
@@ -542,49 +931,142 @@ export function PhotoShelterV4API(apiKey) {
    */
   const metadata = {
     /**
-     * Get all metadata
+     * Get all metadata fields
      * @param {Object} params - Query parameters
      * @param {number} [params.page] - Page number
      * @param {number} [params.per_page] - Number of items per page
      * @returns {Promise<Object>} - The metadata information
      */
-    getAll: async (params = {}) => await request("/metadata", params),
+    getAllFields: async (params = {}) =>
+      await request("/metadata/fields", params),
 
     /**
-     * Get a specific metadata by ID
-     * @param {string} id - The ID of the metadata
-     * @returns {Promise<Object>} - The metadata information
+     * Get a specific metadata field by ID
+     * @param {string} id - The ID of the metadata field
+     * @returns {Promise<Object>} - The metadata field information
      */
-    getById: async (id) => await request(`/metadata/${id}`),
+    getFieldById: async (id) => await request(`/metadata/fields/${id}`),
 
     /**
-     * Create a new metadata
-     * @param {Object} params - Metadata parameters
-     * @param {string} params.name - Metadata name
-     * @param {string} params.description - Metadata description
-     * @returns {Promise<Object>} - The created metadata information
+     * Create a new metadata field
+     * @param {Object} params - Metadata field parameters
+     * @param {string} params.name - Metadata field name
+     * @param {string} params.description - Metadata field description
+     * @returns {Promise<Object>} - The created metadata field information
      */
-    create: async (params) =>
-      await request("/metadata", params, { method: "POST" }),
+    createField: async (params) =>
+      await request("/metadata/fields", params, { method: "POST" }),
 
     /**
-     * Update an existing metadata
-     * @param {string} id - The ID of the metadata
-     * @param {Object} params - Metadata parameters
-     * @param {string} [params.name] - Metadata name
-     * @param {string} [params.description] - Metadata description
-     * @returns {Promise<Object>} - The updated metadata information
+     * Update an existing metadata field
+     * @param {string} id - The ID of the metadata field
+     * @param {Object} params - Metadata field parameters
+     * @param {string} [params.name] - Metadata field name
+     * @param {string} [params.description] - Metadata field description
+     * @returns {Promise<Object>} - The updated metadata field information
      */
-    update: async (id, params) =>
-      await request(`/metadata/${id}`, params, { method: "PUT" }),
+    updateField: async (id, params) =>
+      await request(`/metadata/fields/${id}`, params, { method: "PUT" }),
 
     /**
-     * Delete a metadata
-     * @param {string} id - The ID of the metadata
+     * Delete a metadata field
+     * @param {string} id - The ID of the metadata field
      * @returns {Promise<Object>} - The delete response
      */
-    delete: async (id) =>
-      await request(`/metadata/${id}`, {}, { method: "DELETE" }),
+    deleteField: async (id) =>
+      await request(`/metadata/fields/${id}`, {}, { method: "DELETE" }),
+
+    /**
+     * Get all metadata schemas
+     * @param {Object} params - Query parameters
+     * @param {number} [params.page] - Page number
+     * @param {number} [params.per_page] - Number of items per page
+     * @returns {Promise<Object>} - The metadata schemas information
+     */
+    getAllSchemas: async (params = {}) =>
+      await request("/metadata/schemas", params),
+
+    /**
+     * Get a specific metadata schema by ID
+     * @param {string} id - The ID of the metadata schema
+     * @returns {Promise<Object>} - The metadata schema information
+     */
+    getSchemaById: async (id) => await request(`/metadata/schemas/${id}`),
+
+    /**
+     * Create a new metadata schema
+     * @param {Object} params - Metadata schema parameters
+     * @param {string} params.name - Metadata schema name
+     * @param {string} params.description - Metadata schema description
+     * @returns {Promise<Object>} - The created metadata schema information
+     */
+    createSchema: async (params) =>
+      await request("/metadata/schemas", params, { method: "POST" }),
+
+    /**
+     * Update an existing metadata schema
+     * @param {string} id - The ID of the metadata schema
+     * @param {Object} params - Metadata schema parameters
+     * @param {string} [params.name] - Metadata schema name
+     * @param {string} [params.description] - Metadata schema description
+     * @returns {Promise<Object>} - The updated metadata schema information
+     */
+    updateSchema: async (id, params) =>
+      await request(`/metadata/schemas/${id}`, params, { method: "PUT" }),
+
+    /**
+     * Delete a metadata schema
+     * @param {string} id - The ID of the metadata schema
+     * @returns {Promise<Object>} - The delete response
+     */
+    deleteSchema: async (id) =>
+      await request(`/metadata/schemas/${id}`, {}, { method: "DELETE" }),
+
+    /**
+     * Get all metadata values
+     * @param {Object} params - Query parameters
+     * @param {number} [params.page] - Page number
+     * @param {number} [params.per_page] - Number of items per page
+     * @returns {Promise<Object>} - The metadata values information
+     */
+    getAllValues: async (params = {}) =>
+      await request("/metadata/values", params),
+
+    /**
+     * Get a specific metadata value by ID
+     * @param {string} id - The ID of the metadata value
+     * @returns {Promise<Object>} - The metadata value information
+     */
+    getValueById: async (id) => await request(`/metadata/values/${id}`),
+
+    /**
+     * Create a new metadata value
+     * @param {Object} params - Metadata value parameters
+     * @param {string} params.field_id - ID of the associated metadata field
+     * @param {string} params.value - Metadata value
+     * @returns {Promise<Object>} - The created metadata value information
+     */
+    createValue: async (params) =>
+      await request("/metadata/values", params, { method: "POST" }),
+
+    /**
+     * Update an existing metadata value
+     * @param {string} id - The ID of the metadata value
+     * @param {Object} params - Metadata value parameters
+     * @param {string} [params.field_id] - ID of the associated metadata field
+     * @param {string} [params.value] - Metadata value
+     * @returns {Promise<Object>} - The updated metadata value information
+     */
+    updateValue: async (id, params) =>
+      await request(`/metadata/values/${id}`, params, { method: "PUT" }),
+
+    /**
+     * Delete a metadata value
+     * @param {string} id - The ID of the metadata value
+     * @returns {Promise<Object>} - The delete response
+     */
+    deleteValue: async (id) =>
+      await request(`/metadata/values/${id}`, {}, { method: "DELETE" }),
   };
 
   /**
@@ -1197,7 +1679,7 @@ export function PhotoShelterV4API(apiKey) {
   };
 
   return {
-    authToken,
+    info,
     authenticate,
     collections,
     contacts,
