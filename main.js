@@ -10,6 +10,11 @@ export function PhotoShelterV4API(apiKey) {
     isTwoFactor = null;
 
   const handleErrors = async (response, location) => {
+    if (response.status == "404") {
+      throw new Error(
+        `Request Failed. Request Response: ${location} = ${response.statusText}`
+      );
+    }
     const json = await response.json();
     const msg = json.errors
       .map((e) => e.title)
@@ -53,7 +58,7 @@ export function PhotoShelterV4API(apiKey) {
     try {
       const response = await fetch(url, options);
       if (!response.ok) {
-        handleErrors(response, endpoint);
+        return await handleErrors(response, endpoint);
       }
 
       return await responseType(response);
@@ -96,7 +101,7 @@ export function PhotoShelterV4API(apiKey) {
         });
 
         if (!response.ok) {
-          handleErrors(response, "login");
+          return await handleErrors(response, "login");
         }
         const json = await responseType(response);
         authToken = json.token;
@@ -1708,4 +1713,138 @@ export function PhotoShelterV4API(apiKey) {
     version,
     workspaces,
   };
+}
+
+/**
+ * Create a PhotoShelter API client
+ * @param {string} apiKey - Your PhotoShelter API key
+
+ */
+export function PhotoShelterV3API(apiKey) {
+  const baseUrl = "https://www.photoshelter.com/psapi/v3";
+  let authToken = null,
+    org = null,
+    isTwoFactor = null;
+
+  const handleErrors = async (response, location) => {
+    if (response.status == "404") {
+      throw new Error(
+        `Request Failed. Request Response: ${location} = ${response.statusText}`
+      );
+    }
+    const json = await response.json();
+    const msg = json.errors
+      .map((e) => e.title)
+      .filter(Boolean)
+      .join(" | ");
+    throw new Error(`Request Failed. Request Response: ${location} = ${msg}`);
+  };
+
+  const responseType = async (response) => {
+    const clone = response.clone();
+    try {
+      const json = await response.json();
+      return json.data;
+    } catch (error) {
+      return await clone.arrayBuffer();
+    }
+  };
+
+  /**
+   * Make an authenticated request to the PhotoShelter API
+   * @param {string} endpoint - The API endpoint
+   * @param {Object} params - The query parameters
+   * @param {Object} [options] - Optional fetch options (e.g., method, headers)
+   * @returns {Promise<Object>} - The API response
+   */
+  const request = async (endpoint, params = {}, options = {}) => {
+    if (!authToken) {
+      throw new Error("No auth token. Make sure to authenticate.login() first");
+    }
+    options.headers = {
+      ...options.headers,
+      "X-PS-Auth-Token": authToken,
+      "X-PS-API-Key": apiKey,
+      "Content-Type": "application/json",
+    };
+
+    const url = new URL(`${baseUrl}${endpoint}`);
+    const searchParams = new URLSearchParams(params);
+
+    url.search = searchParams.toString();
+
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        return await handleErrors(response, endpoint);
+      }
+
+      return await responseType(response);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const toForm = (obj) => {
+    return Object.keys(obj)
+      .map((key) =>
+        obj[key]
+          ? `${encodeURIComponent(key)}=${encodeURIComponent(obj[key])}`
+          : ""
+      )
+      .filter(Boolean)
+      .join("&");
+  };
+
+  // Authentication Endpoints
+  const authenticate = {
+    /**
+     * Authenticate user and get a token
+     * @param {string} email - Email
+     * @param {string} password - Password
+     * @param {string} [orgId] - [Optional] Your organization ID
+     * @returns {Promise}
+     * @throws Throws an error if not ok status
+     */
+    login: async (email, password, orgId) => {
+      try {
+        const body = toForm({ email, password, mode: "token", org_id: orgId });
+        const response = await fetch(`${baseUrl}/mem/authenticate`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            "X-PS-Api-Key": apiKey,
+          },
+          body,
+        });
+
+        if (!response.ok) {
+          return await handleErrors(response, "login");
+        }
+        const json = await responseType(response);
+        authToken = json.token;
+        org = json.org;
+        isTwoFactor = json.two_factor;
+      } catch (error) {
+        throw error;
+      }
+    },
+  };
+
+  /**
+   * Workspaces Endpoints
+   * @namespace workspaces
+   */
+  const workspaces = {
+    /**
+     * Get current review information for a media asset
+     * @param {string} workspaceId - The ID of the workspace
+     * @param {string} mediaId - The ID of the media
+     * @returns {Promise<Object>} - The media review object
+     */
+    getMediaReview: async (workspaceId, mediaId) =>
+      await request(`/workspace/${workspaceId}/media/${mediaId}/review`),
+  };
+
+  return { authenticate, workspaces };
 }
